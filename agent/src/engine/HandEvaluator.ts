@@ -1,0 +1,73 @@
+import { Card, cardToString, HandCategory } from "../types/cards";
+
+// pokersolver provides Hand.solve() for 5-7 card evaluation
+const PokerSolver = require("pokersolver");
+const Hand = PokerSolver.Hand;
+
+export interface HandResult {
+  category: HandCategory;
+  rank: number;         // Numeric rank for comparison (higher = better)
+  name: string;         // Human-readable name e.g. "Pair, Aces"
+  cards: string[];      // Best 5 cards used
+}
+
+// Map pokersolver rank names to our HandCategory
+const CATEGORY_MAP: Record<string, HandCategory> = {
+  "Royal Flush": HandCategory.ROYAL_FLUSH,
+  "Straight Flush": HandCategory.STRAIGHT_FLUSH,
+  "Four of a Kind": HandCategory.FOUR_OF_A_KIND,
+  "Full House": HandCategory.FULL_HOUSE,
+  "Flush": HandCategory.FLUSH,
+  "Straight": HandCategory.STRAIGHT,
+  "Three of a Kind": HandCategory.THREE_OF_A_KIND,
+  "Two Pair": HandCategory.TWO_PAIR,
+  "Pair": HandCategory.PAIR,
+  "High Card": HandCategory.HIGH_CARD,
+};
+
+export class HandEvaluator {
+  /**
+   * Evaluate a poker hand from 5-7 cards.
+   * Returns a HandResult with category, rank, and name.
+   */
+  evaluate(cards: Card[]): HandResult {
+    if (cards.length < 5 || cards.length > 7) {
+      throw new Error(`Need 5-7 cards to evaluate, got ${cards.length}`);
+    }
+
+    // Convert to pokersolver format: "As", "Kh", "Td", etc.
+    const solverCards = cards.map((c) => this.toSolverFormat(c));
+    const solved = Hand.solve(solverCards);
+
+    const category = CATEGORY_MAP[solved.name] || HandCategory.HIGH_CARD;
+
+    return {
+      category,
+      rank: solved.rank,
+      name: solved.descr,
+      cards: solved.cardPool.map((c: any) => c.toString()),
+    };
+  }
+
+  /**
+   * Compare two hands. Returns:
+   *  1 if hand1 wins
+   * -1 if hand2 wins
+   *  0 if tie
+   */
+  compare(hand1Cards: Card[], hand2Cards: Card[]): number {
+    const solver1 = Hand.solve(hand1Cards.map((c) => this.toSolverFormat(c)));
+    const solver2 = Hand.solve(hand2Cards.map((c) => this.toSolverFormat(c)));
+
+    const winners = Hand.winners([solver1, solver2]);
+
+    if (winners.length === 2) return 0; // tie
+    if (winners[0] === solver1) return 1;
+    return -1;
+  }
+
+  private toSolverFormat(card: Card): string {
+    // pokersolver expects: rank + suit (e.g., "As" for Ace of spades)
+    return `${card.rank}${card.suit}`;
+  }
+}

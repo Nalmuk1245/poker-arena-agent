@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "poker-arena": {
+      "command": "node",
+      "args": ["C:/Users/secha/poker-arena-agent/mcp/build/mcp/src/index.js"],
+      "env": {
+        "MOLTBOOK_API_KEY": "your_moltbook_api_key_here"
+      }
+    }
+  }
+}

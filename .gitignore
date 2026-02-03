@@ -1,0 +1,11 @@
+node_modules/
+dist/
+cache/
+artifacts/
+typechain-types/
+.env
+data/*.json
+coverage/
+coverage.json
+mcp/build/
+.claude/

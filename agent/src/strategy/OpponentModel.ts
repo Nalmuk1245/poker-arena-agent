@@ -20,6 +20,7 @@ const DEFAULT_PROFILE: Omit<OpponentProfile, "address"> = {
 };
 
 export class OpponentModel {
+  private static readonly MAX_PROFILES = 100;
   private profiles: Map<string, OpponentProfile> = new Map();
   // Raw counters for computing stats
   private counters: Map<
@@ -47,6 +48,22 @@ export class OpponentModel {
 
   getProfile(address: string): OpponentProfile {
     if (!this.profiles.has(address)) {
+      // Evict least-played profile if at capacity
+      if (this.profiles.size >= OpponentModel.MAX_PROFILES) {
+        let minAddr = "";
+        let minHands = Infinity;
+        for (const [addr, profile] of this.profiles) {
+          if (profile.handsPlayed < minHands) {
+            minHands = profile.handsPlayed;
+            minAddr = addr;
+          }
+        }
+        if (minAddr) {
+          this.profiles.delete(minAddr);
+          this.counters.delete(minAddr);
+        }
+      }
+
       this.profiles.set(address, {
         ...DEFAULT_PROFILE,
         address,

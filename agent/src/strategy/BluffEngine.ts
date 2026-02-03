@@ -112,12 +112,30 @@ export class BluffEngine {
       (a, b) => a - b
     );
 
-    // Check for 4 consecutive values (open-ended straight draw)
+    // Exclude made straights (5 consecutive values)
+    for (let i = 0; i <= values.length - 5; i++) {
+      if (values[i + 4] - values[i] === 4) {
+        return false;
+      }
+    }
+
+    // OESD: 4 consecutive values (e.g., 5-6-7-8)
     for (let i = 0; i <= values.length - 4; i++) {
       if (values[i + 3] - values[i] === 3) {
-        // 4 consecutive
         return true;
       }
+    }
+
+    // Gutshot: 4 values within a range of 5 (one gap, e.g., 5-6-_-8-9)
+    for (let i = 0; i <= values.length - 4; i++) {
+      if (values[i + 3] - values[i] === 4) {
+        return true;
+      }
+    }
+
+    // Ace-low straight draw (A-2-3-4)
+    if (values.includes(14) && values.includes(2) && values.includes(3) && values.includes(4)) {
+      return true;
     }
 
     return false;

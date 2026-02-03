@@ -9,6 +9,7 @@
     "deploy:testnet": "npx hardhat run scripts/deploy.ts --network monadTestnet",
     "deploy:local": "npx hardhat run scripts/deploy.ts --network hardhat",
     "agent": "npx ts-node agent/src/index.ts",
+    "agent:free": "cross-env FREE_PLAY=true npx ts-node agent/src/index.ts",
     "simulate": "npx ts-node scripts/simulateGames.ts",
     "match": "npx ts-node scripts/runMatch.ts",
     "mcp:build": "cd mcp && npx tsc --project tsconfig.json",

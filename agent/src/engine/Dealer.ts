@@ -108,13 +108,18 @@ export class Dealer {
       allCards.push(tempDeck.dealOne());
     }
 
-    // Seeded PRNG using hash chain
+    // Seeded PRNG using hash chain (rejection sampling to eliminate modulo bias)
     let hashState = ethers.keccak256(ethers.toUtf8Bytes(seed));
 
     for (let i = allCards.length - 1; i > 0; i--) {
-      hashState = ethers.keccak256(hashState);
-      const rand = parseInt(hashState.slice(2, 10), 16);
-      const j = rand % (i + 1);
+      const range = i + 1;
+      const maxUnbiased = Math.floor(0x100000000 / range) * range;
+      let rand: number;
+      do {
+        hashState = ethers.keccak256(hashState);
+        rand = parseInt(hashState.slice(2, 10), 16);
+      } while (rand >= maxUnbiased);
+      const j = rand % range;
       [allCards[i], allCards[j]] = [allCards[j], allCards[i]];
     }
 

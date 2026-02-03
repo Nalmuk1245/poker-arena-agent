@@ -23,6 +23,14 @@ export const config = {
     consecutiveLossLimit: 3,
   },
 
+  // Polling
+  pollingIntervalMs: parseInt(process.env.POLLING_INTERVAL_MS || "3000"),
+
+  // Free play mode (no tokens, off-chain matches against built-in bot)
+  freePlay: process.env.FREE_PLAY === "true",
+  freePlayMatches: parseInt(process.env.FREE_PLAY_MATCHES || "10"),
+  freePlayDelay: parseInt(process.env.FREE_PLAY_DELAY || "2000"),
+
   // Logging
   logLevel: process.env.LOG_LEVEL || "info",
 };

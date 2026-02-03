@@ -45,6 +45,31 @@ export class GameActions {
   }
 
   /**
+   * Create a free game (no token wager, recorded on-chain).
+   */
+  async createFreeGame(): Promise<number> {
+    const pokerGame = this.contractManager.getPokerGame();
+    const tx = await pokerGame.createFreeGame();
+    const receipt = await tx.wait();
+
+    const event = receipt.logs.find(
+      (log: any) => {
+        try {
+          const parsed = pokerGame.interface.parseLog({ topics: log.topics as string[], data: log.data });
+          return parsed?.name === "GameCreated";
+        } catch { return false; }
+      }
+    );
+
+    if (event) {
+      const parsed = pokerGame.interface.parseLog({ topics: event.topics as string[], data: event.data });
+      return Number(parsed!.args[0]);
+    }
+
+    throw new Error("GameCreated event not found in receipt");
+  }
+
+  /**
    * Join an existing game.
    */
   async joinGame(gameId: number, wagerWei: bigint): Promise<void> {

@@ -75,7 +75,7 @@ export class BankrollManager {
 
     return {
       maxWager,
-      optimalWager: Math.floor(optimalWager),
+      optimalWager: Math.round(optimalWager * 1e6) / 1e6,
       riskLevel,
       shouldPlay,
     };

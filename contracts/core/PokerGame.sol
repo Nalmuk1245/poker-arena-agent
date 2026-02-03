@@ -63,6 +63,23 @@ contract PokerGame {
         return gameId;
     }
 
+    /**
+     * Create a free game (no token wager). Results are recorded on-chain
+     * but no tokens are staked or transferred.
+     */
+    function createFreeGame() external returns (uint256) {
+        uint256 gameId = gameCount++;
+        GameStructs.Game storage g = games[gameId];
+        g.player1 = msg.sender;
+        g.wagerAmount = 0;
+        g.phase = GameStructs.GamePhase.WAITING;
+        g.isActive = true;
+        g.lastActionTime = block.timestamp;
+
+        emit GameCreated(gameId, msg.sender, 0);
+        return gameId;
+    }
+
     function joinGame(uint256 gameId) external payable {
         GameStructs.Game storage g = games[gameId];
         require(g.isActive, "Game not active");
@@ -75,8 +92,10 @@ contract PokerGame {
         g.currentTurn = g.player1;
         g.lastActionTime = block.timestamp;
 
-        vault.depositWager{value: msg.value}(gameId, msg.sender);
-        totalWagered[msg.sender] += msg.value;
+        if (g.wagerAmount > 0) {
+            vault.depositWager{value: msg.value}(gameId, msg.sender);
+            totalWagered[msg.sender] += msg.value;
+        }
 
         emit PlayerJoined(gameId, msg.sender);
         emit PhaseAdvanced(gameId, GameStructs.GamePhase.PREFLOP);
@@ -281,16 +300,20 @@ contract PokerGame {
 
         // The player who DID NOT time out wins
         address winner = msg.sender;
+
+        // Effects before interactions
         g.phase = GameStructs.GamePhase.COMPLETE;
         g.isActive = false;
-
-        vault.distributePayout(gameId, winner);
         wins[winner]++;
-
         address loser = (winner == g.player1) ? g.player2 : g.player1;
         if (loser != address(0)) losses[loser]++;
 
         emit GameComplete(gameId, winner, g.pot);
+
+        // Interaction last
+        if (g.wagerAmount > 0) {
+            vault.distributePayout(gameId, winner);
+        }
     }
 
     // ============ View Functions ============
@@ -337,14 +360,18 @@ contract PokerGame {
             winner = g.player1;
         }
 
+        // Effects before interactions
         g.phase = GameStructs.GamePhase.COMPLETE;
         g.isActive = false;
-
-        vault.distributePayout(gameId, winner);
         wins[winner]++;
         losses[msg.sender]++;
 
         emit GameComplete(gameId, winner, g.pot);
+
+        // Interaction last
+        if (g.wagerAmount > 0) {
+            vault.distributePayout(gameId, winner);
+        }
     }
 
     function _advancePhase(uint256 gameId, GameStructs.Game storage g) internal {
@@ -377,25 +404,31 @@ contract PokerGame {
         } else if (g.player2HandRank > g.player1HandRank) {
             winner = g.player2;
         } else {
-            // Same category - compare detailed scores
             if (g.player1HandScore > g.player2HandScore) {
                 winner = g.player1;
             } else if (g.player2HandScore > g.player1HandScore) {
                 winner = g.player2;
             } else {
                 // True tie - split pot
-                vault.distributeSplitPot(gameId, g.player1, g.player2);
                 emit GameDraw(gameId);
+                if (g.wagerAmount > 0) {
+                    vault.distributeSplitPot(gameId, g.player1, g.player2);
+                }
                 return;
             }
         }
 
-        vault.distributePayout(gameId, winner);
+        // Effects before interactions
         wins[winner]++;
         address loser = (winner == g.player1) ? g.player2 : g.player1;
         losses[loser]++;
 
         emit GameComplete(gameId, winner, g.pot);
+
+        // Interaction last
+        if (g.wagerAmount > 0) {
+            vault.distributePayout(gameId, winner);
+        }
     }
 
     function _isPlayer(GameStructs.Game storage g, address addr) internal view returns (bool) {

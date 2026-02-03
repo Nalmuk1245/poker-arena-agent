@@ -7,10 +7,12 @@ async function main() {
   const balance = await ethers.provider.getBalance(deployer.address);
   console.log("Account balance:", ethers.formatEther(balance), "MON");
 
-  // Deploy TokenVault
-  console.log("\nDeploying TokenVault...");
+  // Deploy TokenVault with dealer fee
+  // Dealer = deployer address, Fee = 250 bps (2.5%)
+  const DEALER_FEE_BPS = 250;
+  console.log(`\nDeploying TokenVault (dealer: ${deployer.address}, fee: ${DEALER_FEE_BPS / 100}%)...`);
   const TokenVault = await ethers.getContractFactory("TokenVault");
-  const vault = await TokenVault.deploy();
+  const vault = await TokenVault.deploy(deployer.address, DEALER_FEE_BPS);
   await vault.waitForDeployment();
   const vaultAddress = await vault.getAddress();
   console.log("TokenVault deployed to:", vaultAddress);
@@ -33,6 +35,8 @@ async function main() {
   console.log("\n========== DEPLOYMENT COMPLETE ==========");
   console.log(`TOKEN_VAULT_ADDRESS=${vaultAddress}`);
   console.log(`POKER_GAME_ADDRESS=${pokerGameAddress}`);
+  console.log(`DEALER_ADDRESS=${deployer.address}`);
+  console.log(`DEALER_FEE=${DEALER_FEE_BPS / 100}%`);
   console.log("==========================================");
   console.log("\nAdd these to your .env file!");
 }

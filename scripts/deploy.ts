@@ -31,10 +31,19 @@ async function main() {
   await authTx.wait();
   console.log("PokerGame authorized in TokenVault");
 
+  // Deploy PokerSettlement (batch settlement for off-chain arena games)
+  console.log("\nDeploying PokerSettlement...");
+  const PokerSettlement = await ethers.getContractFactory("PokerSettlement");
+  const settlement = await PokerSettlement.deploy();
+  await settlement.waitForDeployment();
+  const settlementAddress = await settlement.getAddress();
+  console.log("PokerSettlement deployed to:", settlementAddress);
+
   // Summary
   console.log("\n========== DEPLOYMENT COMPLETE ==========");
   console.log(`TOKEN_VAULT_ADDRESS=${vaultAddress}`);
   console.log(`POKER_GAME_ADDRESS=${pokerGameAddress}`);
+  console.log(`POKER_SETTLEMENT_ADDRESS=${settlementAddress}`);
   console.log(`DEALER_ADDRESS=${deployer.address}`);
   console.log(`DEALER_FEE=${DEALER_FEE_BPS / 100}%`);
   console.log("==========================================");

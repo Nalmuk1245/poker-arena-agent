@@ -7,6 +7,7 @@ export class ContractManager {
   private signer: ethers.Wallet;
   private pokerGameContract: ethers.Contract | null = null;
   private tokenVaultContract: ethers.Contract | null = null;
+  private pokerSettlementContract: ethers.Contract | null = null;
 
   constructor(rpcUrl: string, privateKey: string) {
     this.provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -41,6 +42,25 @@ export class ContractManager {
   getTokenVault(): ethers.Contract {
     if (!this.tokenVaultContract) throw new Error("TokenVault not initialized");
     return this.tokenVaultContract;
+  }
+
+  async initializeSettlement(settlementAddress: string): Promise<void> {
+    if (!settlementAddress) return;
+    try {
+      const abi = this.loadAbi("PokerSettlement");
+      this.pokerSettlementContract = new ethers.Contract(
+        settlementAddress,
+        abi,
+        this.signer
+      );
+    } catch {
+      // Settlement contract artifact may not exist yet
+    }
+  }
+
+  getPokerSettlement(): ethers.Contract {
+    if (!this.pokerSettlementContract) throw new Error("PokerSettlement not initialized");
+    return this.pokerSettlementContract;
   }
 
   getSigner(): ethers.Wallet {

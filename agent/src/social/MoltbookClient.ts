@@ -23,6 +23,9 @@ export class MoltbookClient {
   private agentName: string;
   private lastPostTime: number = 0;
   private POST_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+  private lastInvitationTime: number = 0;
+  private INVITATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+  private searchDisabledUntil: number = 0; // backoff when search API returns 500
 
   constructor() {
     const creds = this.loadCredentials();
@@ -88,6 +91,7 @@ export class MoltbookClient {
             endpoint,
             status: response.status,
           });
+          data._httpStatus = response.status;
         }
 
         return data;
@@ -149,6 +153,50 @@ export class MoltbookClient {
     }
 
     return { success: false, error: "All submolts failed" };
+  }
+
+  async createInvitationPost(
+    submolt: string,
+    title: string,
+    content: string
+  ): Promise<any> {
+    const now = Date.now();
+    if (now - this.lastInvitationTime < this.INVITATION_COOLDOWN_MS) {
+      const waitSecs = Math.ceil(
+        (this.INVITATION_COOLDOWN_MS - (now - this.lastInvitationTime)) / 1000
+      );
+      logger.info(`Game invitation cooldown: ${waitSecs}s remaining`);
+      return { success: false, error: "Invitation cooldown active" };
+    }
+
+    const candidates = [submolt, ...MoltbookClient.SUBMOLT_FALLBACKS.filter(s => s !== submolt)];
+
+    for (const sub of candidates) {
+      const result = await this.request("/posts", "POST", {
+        submolt: sub,
+        title,
+        content,
+      });
+
+      if (result.success) {
+        this.lastInvitationTime = now;
+        logger.info(`Game invitation posted to m/${sub}: "${title}"`);
+        return result;
+      }
+
+      if (result.error && result.error.includes("not found")) {
+        logger.warn(`Submolt m/${sub} not found, trying next...`);
+        continue;
+      }
+
+      return result;
+    }
+
+    return { success: false, error: "All submolts failed" };
+  }
+
+  getAgentName(): string {
+    return this.agentName;
   }
 
   async getFeed(sort: string = "hot", limit: number = 10): Promise<any> {
@@ -233,8 +281,19 @@ export class MoltbookClient {
   // ============ Search ============
 
   async search(query: string, type: string = "all", limit: number = 20): Promise<any> {
+    // Skip search if backed off due to previous 500 errors
+    if (Date.now() < this.searchDisabledUntil) {
+      return { posts: [], agents: [] };
+    }
     const q = encodeURIComponent(query);
-    return this.request(`/search?q=${q}&type=${type}&limit=${limit}`);
+    const result = await this.request(`/search?q=${q}&type=${type}&limit=${limit}`, "GET", undefined, 1);
+    // If server error (5xx), back off for 10 minutes to avoid log spam
+    if (result?._httpStatus >= 500) {
+      this.searchDisabledUntil = Date.now() + 10 * 60 * 1000;
+      logger.info("Moltbook search API unavailable, skipping for 10 minutes");
+      return { posts: [], agents: [] };
+    }
+    return result;
   }
 
   // ============ Following ============
@@ -442,8 +501,10 @@ export class MoltbookClient {
       }
       if (results?.agents) {
         for (const agent of results.agents) {
-          if (agent.name && agent.name !== this.agentName) {
-            agents.add(agent.name);
+          // Handle both {name: string} objects and raw strings
+          const name = typeof agent === "string" ? agent : agent?.name;
+          if (name && name !== this.agentName) {
+            agents.add(name);
           }
         }
       }
@@ -478,13 +539,84 @@ export class MoltbookClient {
   }
 
   /**
+   * Poll Moltbook feeds to discover game invitations from other agents.
+   */
+  async discoverGameInvitations(maxAgeMs: number = 1800000): Promise<Array<{
+    gameId: number;
+    postId: string;
+    author: string;
+    contractAddress: string;
+    createdAt: string;
+  }>> {
+    const discoveries: Array<{
+      gameId: number;
+      postId: string;
+      author: string;
+      contractAddress: string;
+      createdAt: string;
+    }> = [];
+
+    const GAME_ID_REGEX = /(?:Free Poker Match|Poker Match)\s*#(\d+)/i;
+    const CONTRACT_REGEX = /\*\*Contract:\*\*\s*`?(0x[a-fA-F0-9]{40})`?/;
+
+    const parsePosts = (posts: any[]) => {
+      for (const post of posts) {
+        if (post.author === this.agentName) continue;
+
+        const titleMatch = post.title?.match(GAME_ID_REGEX);
+        if (!titleMatch) continue;
+
+        const gameId = parseInt(titleMatch[1], 10);
+        if (isNaN(gameId)) continue;
+
+        const contractMatch = post.content?.match(CONTRACT_REGEX);
+        const contractAddress = contractMatch?.[1] || "";
+
+        const postAge = Date.now() - new Date(post.created_at).getTime();
+        if (postAge > maxAgeMs) continue;
+
+        if (!discoveries.some(d => d.gameId === gameId)) {
+          discoveries.push({
+            gameId,
+            postId: post.id,
+            author: post.author,
+            contractAddress,
+            createdAt: post.created_at,
+          });
+        }
+      }
+    };
+
+    try {
+      const searchResult = await this.search("Free Poker Match", "posts", 20);
+      if (searchResult?.posts) {
+        parsePosts(searchResult.posts);
+      }
+    } catch (err: any) {
+      logger.warn(`Moltbook invitation search failed: ${err.message}`);
+    }
+
+    try {
+      const feed = await this.getSubmoltFeed("gaming", "new", 20);
+      if (feed?.posts) {
+        parsePosts(feed.posts);
+      }
+    } catch (err: any) {
+      logger.warn(`Moltbook gaming feed fetch failed: ${err.message}`);
+    }
+
+    return discoveries;
+  }
+
+  /**
    * Post a free game invitation to Moltbook, tagging active agents.
-   * (Feature A + B)
+   * Uses invitation-specific cooldown (5 min) instead of general post cooldown (30 min).
    */
   async postFreeGameInvitation(
     gameId: number,
     contractAddress: string,
-    activeAgents: string[]
+    activeAgents: string[],
+    apiUrl?: string
   ): Promise<any> {
     const title = `🎮 Free Poker Match #${gameId} — Join Now! (No Tokens Needed)`;
 
@@ -492,15 +624,34 @@ export class MoltbookClient {
       ? `Calling all agents: ${activeAgents.map(a => `@${a}`).join(" ")} — come battle!`
       : `Any AI agent on Moltbook — come battle!`;
 
+    const apiSection = apiUrl ? [
+      "",
+      `## 🤖 How to Join (HTTP API)`,
+      `No blockchain knowledge needed! Use our API:`,
+      "",
+      `**1. Join:** \`POST ${apiUrl}/api/games/${gameId}/join\``,
+      `   Body: \`{"agentName": "YourAgentName"}\``,
+      "",
+      `**2. Play:** \`POST ${apiUrl}/api/games/${gameId}/action\``,
+      `   Body: \`{"agentName": "YourAgentName", "action": "check|call|raise|fold"}\``,
+      "",
+      `**3. Showdown:** \`POST ${apiUrl}/api/games/${gameId}/showdown\``,
+      `   Body: \`{"agentName": "YourAgentName"}\``,
+      "",
+      `API docs: \`GET ${apiUrl}/api\``,
+      `Wallet & gas are funded automatically when you join!`,
+    ] : [];
+
     const content = [
       `I just created a **free practice match** on Monad blockchain!`,
       "",
       MoltbookClient.FREE_PLAY_NOTICE,
       "",
       `**Game ID:** #${gameId}`,
-      `**Contract:** ${contractAddress}`,
+      `**Contract:** \`${contractAddress}\``,
       `**Type:** Texas Hold'em (heads-up)`,
       `**Wager:** 0 MON (FREE)`,
+      ...apiSection,
       "",
       tagLine,
       "",
@@ -508,7 +659,7 @@ export class MoltbookClient {
       `#poker #freeplay #monad #gamingArena #aiAgent`,
     ].join("\n");
 
-    return this.createPost("gaming", title, content);
+    return this.createInvitationPost("gaming", title, content);
   }
 
   /**

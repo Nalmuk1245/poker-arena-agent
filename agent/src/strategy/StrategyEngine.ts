@@ -18,6 +18,12 @@ export class StrategyEngine {
   private simulations: number;
   private evolver: StrategyEvolver | null = null;
   private evolvedParams: EvolutionParams | null = null;
+  private _lastIntent: {
+    equity: number;
+    ev: { evFold: number; evCall: number; evRaise: number; bestAction: string };
+    bluff: { shouldBluff: boolean; reasoning: string };
+    profile: OpponentProfile;
+  } | null = null;
 
   constructor(
     opponentModel: OpponentModel,
@@ -46,6 +52,10 @@ export class StrategyEngine {
    */
   getEvolver(): StrategyEvolver | null {
     return this.evolver;
+  }
+
+  getLastIntent() {
+    return this._lastIntent;
   }
 
   /**
@@ -91,9 +101,23 @@ export class StrategyEngine {
 
     // Step 3: Calculate EV for each action
     const callAmount = this.rules.getCallAmount(gameState);
+
+    // Dynamic raise sizing based on opponent tendencies and equity
+    let raiseFraction = 0.66; // default 2/3 pot
+    if (profile.aggression > 0.6) {
+      // Against aggressive opponents: raise bigger to punish wide ranges
+      raiseFraction = 1.0;
+    } else if (profile.aggression < 0.3) {
+      // Against passive opponents: value bet larger, they'll call
+      raiseFraction = 0.85;
+    }
+    if (adjustedEquity > 0.75) {
+      // With strong hands: size up for value
+      raiseFraction = Math.min(raiseFraction * 1.5, 1.5);
+    }
     const raiseAmount = this.rules.calculateBetSize(
       gameState.potSize,
-      0.66,
+      raiseFraction,
       gameState.myStack
     );
 
@@ -115,9 +139,17 @@ export class StrategyEngine {
 
     // Step 5: Bankroll-aware max bet (evolved aggression factor applied)
     const aggFactor = this.evolvedParams?.aggressionFactor ?? 1.0;
-    const maxBet = gameState.myStack * 0.3 * aggFactor;
+    const maxBet = gameState.myStack * 0.6 * aggFactor;
 
-    // Step 6: Make final decision
+    // Step 6: Save intent data for dashboard
+    this._lastIntent = {
+      equity: adjustedEquity,
+      ev,
+      bluff: { shouldBluff: bluffDecision.shouldBluff, reasoning: bluffDecision.reasoning },
+      profile,
+    };
+
+    // Step 7: Make final decision
     return this.makeFinalDecision(
       gameState,
       validActions,
@@ -145,7 +177,8 @@ export class StrategyEngine {
     // Premium hands (equity > 0.8): raise aggressively
     if (equity > 0.8 && validActions.includes(PlayerAction.RAISE)) {
       const bigRaise = Math.min(
-        Math.floor(state.potSize * 1.0),
+        Math.floor(state.potSize * 1.5),
+        maxBet,
         state.myStack
       );
       return {
@@ -169,9 +202,9 @@ export class StrategyEngine {
     }
 
     // Strong hands: raise for value (threshold adjusted by evolution)
-    const baseThreshold = this.evolvedParams?.valueBetThreshold ?? 0.65;
+    const baseThreshold = this.evolvedParams?.valueBetThreshold ?? 0.50;
     const valueBetThreshold = profile.archetype === "STATION" || profile.aggression < 0.3
-      ? Math.min(baseThreshold, 0.55)
+      ? Math.min(baseThreshold, 0.45)
       : baseThreshold;
     if (
       equity > valueBetThreshold &&
@@ -282,12 +315,16 @@ export class StrategyEngine {
       return { action: PlayerAction.RAISE, amount: Math.floor(gameState.potSize * 2.5), reasoning: "Strong broadway" };
     }
 
-    // Playable: 77-99, suited connectors, Ax suited
-    if (isPair && high >= 7) {
-      return { action: PlayerAction.CALL, amount: this.rules.getCallAmount(gameState), reasoning: "Medium pair" };
+    // Playable: medium pairs, suited connectors, Ax suited
+    // Thresholds adjusted by evolved preflopTightness (>1 = tighter, <1 = looser)
+    const tightness = this.evolvedParams?.preflopTightness ?? 1.0;
+    const pairThreshold = Math.max(2, Math.min(14, Math.ceil(7 * tightness)));     // default 7, range 2-14
+    const suitedConnThreshold = Math.max(2, Math.min(14, Math.ceil(6 * tightness))); // default 6, range 2-14
+    if (isPair && high >= pairThreshold) {
+      return { action: PlayerAction.CALL, amount: this.rules.getCallAmount(gameState), reasoning: `Medium pair (tightness=${tightness.toFixed(2)})` };
     }
-    if (isSuited && high - low === 1 && low >= 6) {
-      return { action: PlayerAction.CALL, amount: this.rules.getCallAmount(gameState), reasoning: "Suited connector" };
+    if (isSuited && high - low === 1 && low >= suitedConnThreshold) {
+      return { action: PlayerAction.CALL, amount: this.rules.getCallAmount(gameState), reasoning: `Suited connector (tightness=${tightness.toFixed(2)})` };
     }
     if (high === 14 && isSuited) {
       return { action: PlayerAction.CALL, amount: this.rules.getCallAmount(gameState), reasoning: "Ax suited" };
